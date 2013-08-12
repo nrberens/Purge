@@ -1,0 +1,42 @@
+attributes
+
+strength (str)
+dexterity (dex)
+constitution (con)
+intelligence (int)
+faith (fai)
+perception (per)
+
+
+
+derived stats
+
+melee attack: (str) * lvl
+defense: (con) * lvl
+encumberance: (str + con) * lvl
+soul/mana: (int + fai) * lvl
+
+
+
+combat skills
+
+one-handed (str)
+two-handed (str)
+bare-handed/martial (dex)
+shields (con)
+light armor (dex)
+heavy armor (con)
+unarmored (dex)
+bows (dex)
+thrown (dex)
+sin (destruction) (int)
+blessing (restoration) (fai)
+demon-call (int)
+angel-call (fai)
+
+
+non-combat skills
+
+alchemy (int)
+prayer (fai)
+search (per) *passive
