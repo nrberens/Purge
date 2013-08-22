@@ -1,9 +1,13 @@
 #P U R G E
 #a game by Nathaniel Berens
+
+#v0.15
+#Last updated 8/22/13
+
 #based on code by Jotaf
 #powered by libtcod
-
-#Ping reveals all explored map
+#written by Jice
+#python wrapper by Jotaf
 
 #Split into modules:
 #   map.py
@@ -21,6 +25,8 @@
 
 #0.12 - Added Cave Generation and O2 - 8/7/13
 #0.13 - Added Scanner, changed FOV rules - 8/8/13
+#0.14 - Added Water and Rivers
+#0.15 - Added Beast and simple AI - 8/22/13
 
 
 import libtcodpy as libtcod
@@ -38,21 +44,35 @@ MAP_HEIGHT = 36
 
 BAR_WIDTH = 18
 
+#PANEL
 PANEL_HEIGHT = 7
 PANEL_Y = SCREEN_HEIGHT - PANEL_HEIGHT
 
+#MESSAGE BAR
 MSG_X = BAR_WIDTH + 2
 MSG_WIDTH = SCREEN_WIDTH - BAR_WIDTH - 2
 MSG_HEIGHT = PANEL_HEIGHT - 1
 
+#INVENTORY
 INVENTORY_WIDTH = 50
 
+#FPS
 LIMIT_FPS = 20
 
+#MAP SIZE
 ROOM_MAX_SIZE = 10
 ROOM_MIN_SIZE = 6
-MAX_ROOMS = 30
+MAX_ROOMS = 40
 NUM_FLOORS = 10
+
+#FOV
+FOV_ALGO = 0 #default FOV algorithm
+FOV_LIGHT_WALLS = True
+TORCH_RADIUS = 7
+BEAST_SIGHT_RADIUS = 10
+
+#ROOM SPAWN LIMITS
+MAX_ROOM_ITEMS = 2
 
 #COLOR PALETTES
 
@@ -79,6 +99,7 @@ color_dark_wall = libtcod.Color(26,13,22)
 color_light_wall = libtcod.Color(121,9,0)
 color_dark_ground = libtcod.Color(10,7,2)
 color_light_ground = libtcod.Color(67,8,14)
+color_light_water = libtcod.Color(17,70,68)
 panel_color = libtcod.Color(26,13,22)
 
 #Tutorial
@@ -86,21 +107,6 @@ panel_color = libtcod.Color(26,13,22)
 # color_light_wall = libtcod.Color(130, 110, 50)
 # color_dark_ground = libtcod.Color(50, 50, 150)
 # color_light_ground = libtcod.Color(200, 180, 50)
-
-FOV_ALGO = 0 #default FOV algorithm
-FOV_LIGHT_WALLS = True
-TORCH_RADIUS = 7
-
-MAX_ROOM_MONSTERS = 3
-MAX_ROOM_ITEMS = 2
-
-HEAL_AMOUNT = 30
-LIGHTNING_RANGE = 5
-LIGHTNING_DAMAGE = 20
-CONFUSE_NUM_TURNS = 10
-CONFUSE_RANGE = 8
-FIREBALL_RADIUS = 3
-FIREBALL_DAMAGE = 12
 
 class Tile:
 	#a tile of the map and its properties
@@ -113,6 +119,8 @@ class Tile:
 		self.explored = False
 
 		self.scanned = False
+
+		self.water = False
 		
 		#by default, if a tile is blocked, it also blocks sight
 		if block_sight is None: block_sight = blocked
@@ -142,7 +150,7 @@ class Rect:
 class Object:
 	#this is a generic object: the player, a monster, an item, the stairs...
 	#it's always represented by a character on screen.
-	def __init__(self, x, y, char, name, color, floor=0, blocks=False, stats=None, fighter=None, ai=None, item=None, stairs=None, door=None, fungus=None):
+	def __init__(self, x, y, char, name, color, floor=0, blocks=False, stats=None, fighter=None, ai=None, item=None, stairs=None, door=None, fungus=None, pool=None):
 		self.name = name
 		self.blocks = blocks
 		self.x = x
@@ -179,9 +187,19 @@ class Object:
 		self.fungus = fungus
 		if self.fungus:
 			self.fungus.owner = self
+		
+		self.pool = pool
+		if self.pool:
+			self.pool.owner = self
 	
 	def move(self, dx, dy):
-		#check if destination tile is blocked
+		global beast
+		
+		#check for water if beast
+		if self == beast:
+			if map[beast.x + dx][beast.y + dy].water:
+				return
+		#check if destination tile is blocked		
 		if not map[self.x + dx][self.y + dy].blocked:
 			self.x += dx
 			self.y += dy
@@ -218,11 +236,15 @@ class Object:
 			#set the color and then draw the character that represents this object at its position
 			libtcod.console_set_default_foreground(con, self.color)
 			libtcod.console_put_char(con, self.x, self.y, self.char, libtcod.BKGND_NONE)
+		#DEBUG: Show all objects
+		# libtcod.console_set_default_foreground(con, self.color)
+		# libtcod.console_put_char(con, self.x, self.y, self.char, libtcod.BKGND_NONE)
 	
 	def clear(self):
 		#erase the character that represents this object
 		if libtcod.map_is_in_fov(fov_map, self.x, self.y):
-			libtcod.console_put_char_ex(con, self.x, self.y, ' ', libtcod.white, color_light_ground)
+			#libtcod.console_put_char_ex(con, self.x, self.y, ' ', libtcod.white, color_light_ground)
+			libtcod.console_put_char(con, self.x, self.y, ' ')
 
 class Stats:
 	#statistics for the player character
@@ -324,20 +346,12 @@ class Fighter:
 			if function is not None:
 				function(self.owner)
 	
-	#where to call?
-	
 	def attack(self, target):
 		
-		if	self.owner==player:
-			#if player, use player attack stats
-			hitdie = self.hitdie
-			mindmg = self.mindmg
-			maxdmg = self.maxdmg
-		else:
-			#not player, use filler stats
-			hitdie = 2
-			mindmg = 1
-			maxdmg = 5
+		#if player, use player attack stats
+		hitdie = self.hitdie
+		mindmg = self.mindmg
+		maxdmg = self.maxdmg
 		
 		if libtcod.random_get_int(0,1,20) > hitdie:
 			#hit!
@@ -392,6 +406,32 @@ class ConfusedMonster:
 			self.owner.ai = self.old_ai
 			message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)
 
+class Beast:
+	#AI for The Beast
+	def take_turn(self):
+		beast = self.owner
+
+		#Player is in beast's FOV
+		if libtcod.map_is_in_fov(beast_fov_map, player.x, player.y):
+			#move towards player if far away
+			if beast.distance_to(player) >= 2:
+				beast.move_towards(player.x, player.y)
+			#close enough to attack
+			elif player.fighter.hp > 0:
+				beast.fighter.attack(player)
+		#move randomly
+		else:
+			move = libtcod.random_get_int(0, 0, 3)
+			
+			if move == 0: #move up
+					beast.move(0, -1)
+			elif move == 1: #move down
+					beast.move(0, 1)
+			elif move == 2: #move left
+					beast.move(-1, 0)
+			else: 	#move right
+					beast.move(1, 0)
+				
 class Item:
 	#an item that can be picked up and used.
 	def __init__(self, use_function=None, equipped=False, armor=None, weapon=None, scanner=None):
@@ -503,9 +543,6 @@ class Scanner:
 					map[x][y].scanned = True
 				elif map[x][y].explored and scanner_primed == False:
 					map[x][y].scanned = False
-		
-		if scanner_primed == True:
-			scanner_primed = False
 
 class Stairs:
 	#stairs that go up or down a floor
@@ -554,7 +591,15 @@ class Fungus:
 	#bioluminescent fungus that refills oxygen
 	def __init__(self):
 		return
-
+		
+class Pool:
+	#pool of water, blood, or lava
+	def __init__(self, water=None, blood=None, lava=None):
+		self.water = water
+		self.blood = blood
+		self.lava = lava
+		return
+		
 def create_room(room):
 	global map
 	#go through the tiles in the rectangle and make them passable
@@ -592,6 +637,7 @@ def make_map():
 	num_rooms = 0
 	count = 0
 	total_count = MAP_WIDTH * MAP_HEIGHT
+	beast_exists = False
 	
 	for r in range(MAX_ROOMS):
 		
@@ -622,10 +668,14 @@ def make_map():
 			place_objects(new_room)
 			
 			#20% change of fungus
-			# if libtcod.random_get_int(0, 0, 4) < 1:
-			# 	place_fungus(new_room)
+			if libtcod.random_get_int(0, 0, 4) < 2:
+				place_fungus(new_room)
 			
-			place_fungus(new_room)
+			if libtcod.random_get_int(0, 0, 4) < 1:
+				place_pools(new_room)
+
+			if beast_exists == False and libtcod.random_get_int(0, 0, 10) < 1:
+				beast_exists = place_beast(new_room)
 			
 			#center coordinates of new room, will be useful later
 			(new_x, new_y) = new_room.center()
@@ -706,17 +756,14 @@ def make_map():
 	stairs_down = Object(new_x, new_y, '>', 'stairs leading down', libtcod.Color(223, 223, 223), stairs=stairs_component)
 	objects.append(stairs_down)
 	stairs_down.send_to_back()
+
+	#if beast hasn't been placed, place in last room
+	if beast_exists == False:
+		place_beast(new_room)
 	
-	#add cave sections
 	make_caves(rooms)
+	make_rivers()
 	place_doors()
-	
-	#flood fill to check for continuity
-	x = libtcod.random_get_int(0, 0, MAP_WIDTH-1)
-	y = libtcod.random_get_int(0, 0, MAP_HEIGHT-1)
-	
-	#pdb.set_trace()
-	#(x, y, count)
 
 def make_caves(rooms):
 	#use cellular automata to create cave-like structures in map
@@ -751,6 +798,35 @@ def make_caves(rooms):
 						map[x][y].blocked = True
 						map[x][y].block_sight = True
 
+def make_rivers():
+	starty = libtcod.random_get_int(0, 1, MAP_HEIGHT-1)
+	startx = 0
+		
+	#Drunkard's Walk with double weight to move east
+	
+	x = startx
+	y = starty
+
+	while 1 <= x <= MAP_WIDTH-1 and 1 <= y <= MAP_HEIGHT-1:
+		#place water tile
+		if not map[x][y].water:
+			pool_component = Pool(water=True)
+			pool_instance = Object(x, y, 'u', 'a pool of water', libtcod.Color(52,108,105), pool=pool_component)
+			objects.append(pool_instance)
+			map[x][y].blocked = False
+			map[x][y].block_sight = False
+			map[x][y].water = True
+		
+		walk = libtcod.random_get_int(0, 0, 5)
+		if walk == 0: #go north
+			y -= 1
+		elif walk == 1: #go south
+			y += 1
+		elif walk == 2: #go west
+			x -= 1
+		else:			#go east, 2x chance
+			x += 1
+		
 def flood_fill(x, y, count): #iterative
 	
 	pdb.set_trace()
@@ -886,12 +962,12 @@ def place_objects(room):
 	y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
 	
 	#check for unblocked tile
-	if (map[x][y].blocked == False):
-		monolith_component = Monolith()
-		monolith = Object(x, y, '!', 'a monolith', libtcod.Color(255, 255, 255))
-		objects.append(monolith)
-		map[x][y].blocked = True
-		map[x][y].block_sight = True
+	# if (map[x][y].blocked == False):
+	# 	monolith_component = Monolith()
+	# 	monolith = Object(x, y, '!', 'a monolith', libtcod.Color(255, 255, 255))
+	# 	objects.append(monolith)
+	# 	map[x][y].blocked = True
+	# 	map[x][y].block_sight = True
 
 def place_doors():
 	global map, objects
@@ -934,8 +1010,48 @@ def place_fungus(room):
 				fungus_component = Fungus()
 				fung = Object(i, j, libtcod.CHAR_YEN, 'bioluminescent fungus', libtcod.Color(174,9,13), fungus=fungus_component)
 				objects.append(fung)
+				fung.send_to_back()
 	return
 
+def place_pools(room):	
+	#choose a random spot for pool to spawn
+	x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
+	y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
+
+	radius = 4.0
+	i = -radius
+
+	while i < radius:
+		half_row_width=math.sqrt(radius*radius-i*i)
+   		j = - half_row_width
+    	
+   		while j < half_row_width:
+   			if 0 < int(i)+x < MAP_WIDTH and 0 < int(j)+y < MAP_HEIGHT:
+	   			if map[int(i)+x][int(j)+y].blocked == False or map[int(i)+x][int(j)+y].block_sight == False:
+					pool_component = Pool(water=True)
+					pool_instance = Object(int(i)+x, int(j)+y, 'u', 'a pool of water', libtcod.Color(52,108,105), pool=pool_component)
+					objects.append(pool_instance)
+					map[int(i)+x][int(j)+y].water = True
+					pool_instance.send_to_back()
+			j += 1.0
+		i += 1.0
+
+def place_beast(room):
+	global beast
+	#place The Beast
+	x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
+	y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
+	
+	if not is_blocked(x, y):
+		fighter_component = Fighter(plclass='None', ac=0, str=10, dex=10, con=10, int=10, fth=10, per=10, equipweapon=None, 
+									equiparmor=None, equipscanner = None, hitdie = 10, mindmg = 50, maxdmg = 100, hp=10, defense=0, power=3, o2=100, 
+									death_function=monster_death)
+		ai_component = Beast()
+		beast = Object(x, y, 'B', 'beast', libtcod.darker_green, blocks = True, fighter = fighter_component, ai = ai_component)
+		objects.append(beast)
+		return True
+	return False
+				
 def is_blocked(x, y):
 	#first test the map tile
 	if map[x][y].blocked:
@@ -946,7 +1062,7 @@ def is_blocked(x, y):
 			return True
 
 def closest_monster(max_range):
-	#find closest enemy, up to a maximum range, and in teh player's FOV
+	#find closest enemy, up to a maximum range, and in the player's FOV
 	closest_enemy = None
 	closest_dist = max_range + 1 #start with (slightly more than maximum range)
 	
@@ -1038,44 +1154,10 @@ def handle_keys():																							#handle keyboard commands
 					if i.item.scanner and i.item.equipped:
 						i.item.scanner.ping(True)
 						message('You pinged the map.', libtcod.white)
-
-
-				# #prompt for direction and open door
-				# open_dir = open_menu()
-				# if open_dir == 'North':
-					# for object in objects:
-						# if object.door and object.x == player.x and object.y == (player.y-1):
-							# if object.door.open:
-								# object.door.close_door()
-							# else:
-								# object.door.open_door()
-							# break
-				# elif open_dir == 'South':
-					# for object in objects:
-						# if object.door and object.x == player.x and object.y == (player.y+1):
-							# if object.door.open:
-								# object.door.close_door()
-							# else:
-								# object.door.open_door()
-							# break
-				# elif open_dir == 'East':
-					# for object in objects:
-						# if object.door and object.x == (player.x+1) and object.y == player.y:
-							# if object.door.open:
-								# object.door.close_door()
-							# else:
-								# object.door.open_door()
-							# break
-				# elif open_dir == 'West':
-					# for object in objects:
-						# if object.door and object.x == (player.x-1) and object.y == player.y:
-							# if object.door.open:
-								# object.door.close_door()
-							# else:
-								# object.door.open_door()
-							# break
-			
-			
+						fov_recompute = True
+						render_all()
+						i.item.scanner.ping(False)
+				
 			#ascending
 			if key_char == ',' or key_char == '<':
 				#move up a floor
@@ -1112,8 +1194,6 @@ def handle_keys():																							#handle keyboard commands
 			
 			return 'didnt-take-turn'
 
-
-
 def handle_time():
 	#pdb.set_trace()
 	on_fungus = False
@@ -1121,7 +1201,7 @@ def handle_time():
 	for object in objects:
 		if object.x == player.x and object.y == player.y and object.fungus:
 			on_fungus = True
-			if player.fighter.o2 < 100:
+			if player.fighter.o2 < 200:
 				player.fighter.manage_oxygen(5)
 	
 	if on_fungus == False:
@@ -1247,52 +1327,6 @@ def monster_death(monster):
 	monster.name = 'remains of ' + monster.name
 	monster.send_to_back()
 
-def cast_heal():
-	#heal the player
-	if player.fighter.hp == player.fighter.max_hp:
-		message('You are already at full health.', libtcod.red)
-		return 'cancelled'
-	
-	message('Your wounds start to feel better!', libtcod.light_violet)
-	player.fighter.heal(HEAL_AMOUNT)
-
-def cast_lightning():
-	#find closest enemy (inside a maximum range) and damage it
-	monster = closest_monster(LIGHTNING_RANGE)
-	if monster is None: #no enemy found within maximum rnage
-		message('No enemy is close enough to strike.', libtcod.red)
-		return 'cancelled'
-	
-	#zap it!
-	message('A lightning bolt strikes the ' + monster.name + ' with a loud thunder! The damage is '
-		+ str(LIGHTNING_DAMAGE) + ' hit points ', libtcod.light_blue)
-	monster.fighter.take_damage(LIGHTNING_DAMAGE)
-
-def cast_confuse():
-	#ask the player for a monster to confuse
-	message('libtcod.LEFT-click an enemy to confuse it, or right-click to cancel.', libtcod.light_cyan)
-	monster = target_monster(CONFUSE_RANGE)
-	
-	if monster is None: return 'cancelled'
-	
-	#replace the monster's AI with "confused" AI; after some turns it restores old AI
-	old_ai = monster.ai
-	monster.ai = ConfusedMonster(old_ai)
-	monster.ai.owner = monster #tell the new component who owns it
-	message('The eyes of the ' + monster.name + ' look vacant as he starts to stumble around!', libtcod.light_green)
-
-def cast_fireball():
-	#ask the player for a target tile to throw a fireball at
-	message('libtcod.LEFT-click a target tile for the fireball, or right-click to cancel.', libtcod.light_cyan)
-	(x, y) = target_tile()
-	if x is None: return 'cancelled'
-	message('The fireball explodes, burning everything within ' + str(FIREBALL_RADIUS) + ' tiles!', libtcod.orange)
-	
-	for obj in objects:  #damage every fighter in range, including the player
-		if obj.distance(x, y) <= FIREBALL_RADIUS and obj.fighter:
-			message('The ' + obj.name + ' gets burned for ' + str(FIREBALL_DAMAGE) + ' hit points.', libtcod.orange)
-			obj.fighter.take_damage(FIREBALL_DAMAGE)
-
 def remove_armor():
 	global inventory
 	#check for equipped armor and remove it
@@ -1400,7 +1434,7 @@ def msgbox(text, width=50):
 
 def player_card():
 	#create an off-screen console that represents the card's window
-	window = libtcod.console_new(20, 20)
+	window = libtcod.console_new(30, 20)
 	
 	#print player stats
 	libtcod.console_set_default_foreground(window, libtcod.white)
@@ -1414,7 +1448,7 @@ def player_card():
 	libtcod.console_print_ex(window, 1, 9, libtcod.BKGND_NONE, libtcod.LEFT, 'Encumbrance: ')
 	
 	#blit the contents of "window" to the root console
-	libtcod.console_blit(window, 0, 0, 20, 20, 0, 1, 7, 1.0, 0.7)
+	libtcod.console_blit(window, 0, 0, 30, 20, 0, 1, 7, 1.0, 0.7)
 	
 	#present the root console to the player and wait for a key-press
 	libtcod.console_flush()
@@ -1445,6 +1479,7 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
 
 def render_all():
 	global fov_map, color_dark_wall, color_light_wall
+	global beast_fov_map
 	global color_dark_ground, color_light_ground
 	global fov_recompute
 	
@@ -1452,12 +1487,14 @@ def render_all():
 		#recompute FOV if needed (the player moved or something)
 		fov_recompute = False
 		libtcod.map_compute_fov(fov_map, player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
+		libtcod.map_compute_fov(beast_fov_map, beast.x, beast.y, BEAST_SIGHT_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
 		
 		#go through all tiles, and set their background color
 		for y in range(MAP_HEIGHT):
 			for x in range(MAP_WIDTH):
 				visible = libtcod.map_is_in_fov(fov_map, x, y)
 				wall = map[x][y].block_sight
+				water = map[x][y].water
 				if not visible:
 					#if it's not visible right now, the player can only see it if it's explored
 					if map[x][y].explored and map[x][y].scanned:
@@ -1473,17 +1510,30 @@ def render_all():
 						libtcod.console_set_char_background(con, x, y, color_light_wall, libtcod.BKGND_SET )
 					else:
 						libtcod.console_set_char_background(con, x, y, color_light_ground, libtcod.BKGND_SET )
+
+					if water: 
+						libtcod.console_set_char_background(con, x, y, color_light_water, libtcod.BKGND_SET)
 					#since it's visible, explore it
 					map[x][y].explored = True
+				
+				#DEBUG: NO FOG OF WAR
+				# if wall:
+				# 	libtcod.console_set_char_background(con, x, y, color_light_wall, libtcod.BKGND_SET )
+				# elif water: 
+				# 	libtcod.console_set_char_background(con, x, y, color_light_water, libtcod.BKGND_SET)
+				# else:
+				# 	libtcod.console_set_char_background(con, x, y, color_light_ground, libtcod.BKGND_SET )
 	
 	#draw all objects
 	for object in objects:
 		if object != player:
-			if (object.stairs or object.door) and map[object.x][object.y].explored:
-				libtcod.console_set_default_foreground(con, object.color)
-				libtcod.console_put_char(con, object.x, object.y, object.char, libtcod.BKGND_NONE)
-			else:
-				object.draw()
+			# if (object.stairs or object.door) and map[object.x][object.y].explored:
+				# libtcod.console_set_default_foreground(con, object.color)
+				# libtcod.console_put_char(con, object.x, object.y, object.char, libtcod.BKGND_NONE)
+			# else:
+				# object.draw()
+			#DEBUG: NO FOG OF WAR
+			object.draw()
 	player.draw()
 	
 	#blit 'con' to '0'
@@ -1505,22 +1555,22 @@ def render_all():
 	#show the player's stats
 	libtcod.console_print_ex(top_panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, player.name + ' the ' + player.fighter.plclass)
 	render_bar(1, 1, BAR_WIDTH, 'HP', player.fighter.hp, player.fighter.max_hp, libtcod.light_red, libtcod.darker_red)
-	render_bar(1, 2, BAR_WIDTH, '02', player.fighter.o2, 100, libtcod.light_blue, libtcod.darker_blue)
+	render_bar(1, 2, BAR_WIDTH, '02', player.fighter.o2, 200, libtcod.light_blue, libtcod.darker_blue)
 	render_bar(1, 3, BAR_WIDTH, 'Level', 100, 100, libtcod.light_green, libtcod.darker_green)
 	libtcod.console_print_ex(top_panel, 1, 2, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse())
 	
 	#show the currently equipped weapon's stats
 	# new_msg_lines = textwrap.wrap(new_msg, MSG_WIDTH)
-	libtcod.console_print_ex(top_panel, 20, 0, libtcod.BKGND_NONE, libtcod.LEFT, player.fighter.equipweapon.name[:-9])
-	libtcod.console_print_ex(top_panel, 20, 1, libtcod.BKGND_NONE, libtcod.LEFT, 'Hit %: ' + str((20-player.fighter.hitdie)*5))
-	libtcod.console_print_ex(top_panel, 20, 2, libtcod.BKGND_NONE, libtcod.LEFT, 'Damage: ' + str(player.fighter.mindmg) + ' - ' + str(player.fighter.maxdmg))
+	libtcod.console_print_ex(top_panel, 30, 0, libtcod.BKGND_NONE, libtcod.LEFT, player.fighter.equipweapon.name[:-9])
+	libtcod.console_print_ex(top_panel, 30, 1, libtcod.BKGND_NONE, libtcod.LEFT, 'Hit %: ' + str((20-player.fighter.hitdie)*5))
+	libtcod.console_print_ex(top_panel, 30, 2, libtcod.BKGND_NONE, libtcod.LEFT, 'Damage: ' + str(player.fighter.mindmg) + ' - ' + str(player.fighter.maxdmg))
 	
 	#show the currently equipped armor's stats
-	libtcod.console_print_ex(top_panel, 40, 0, libtcod.BKGND_NONE, libtcod.LEFT, player.fighter.equiparmor.name[:-7])
-	libtcod.console_print_ex(top_panel, 40, 1, libtcod.BKGND_NONE, libtcod.LEFT, 'AC: ' + str(player.fighter.ac))
+	libtcod.console_print_ex(top_panel, 50, 0, libtcod.BKGND_NONE, libtcod.LEFT, player.fighter.equiparmor.name[:-7])
+	libtcod.console_print_ex(top_panel, 50, 1, libtcod.BKGND_NONE, libtcod.LEFT, 'AC: ' + str(player.fighter.ac))
 	
 	#show the currently equipped spell (not implemented yet)
-	libtcod.console_print_ex(top_panel, 60, 0, libtcod.BKGND_NONE, libtcod.LEFT, 'Fireball')
+	libtcod.console_print_ex(top_panel, 70, 0, libtcod.BKGND_NONE, libtcod.LEFT, 'Fireball')
 	
 	#show current target's stats
 	
@@ -1552,7 +1602,9 @@ def new_game():
 	item_component = Item(scanner=scanner_component)
 	def_scanner = Object(0, 0, 's', 'Scanner', libtcod.dark_green, item = item_component)
 	
-	fighter_component = Fighter(plclass='Astronaut', ac=0, str=10, dex=10, con=10, int=10, fth=10, per=10, equipweapon=barehands, equiparmor=birthdaysuit, equipscanner=def_scanner, hitdie = 0, mindmg = 0, maxdmg = 0, hp=500, defense=2, power=5, o2=100, death_function=player_death)
+	fighter_component = Fighter(plclass='Hellstronaut', ac=0, str=10, dex=10, con=10, int=10, fth=10, per=10, equipweapon=barehands, 
+								equiparmor=birthdaysuit, equipscanner=def_scanner, hitdie = 0, mindmg = 0, maxdmg = 0, hp=100, 
+								defense=2, power=5, o2=200, death_function=player_death)
 	player = Object(0, 0, '@', 'Dwayne', libtcod.white, blocks=True, fighter=fighter_component)
 	
 	#while True:
@@ -1560,7 +1612,7 @@ def new_game():
 		# pdb.set_trace()
 		#if all_rooms_are_filled():
 			#break
-	
+			
 	make_map()
 	
 	floors.append([map, objects])
@@ -1581,7 +1633,7 @@ def new_game():
 	message('As you enter, you hear a disembodied voice whisper: "There is no escape here, ' + player.fighter.plclass + ', not even death."', libtcod.red)
 
 def initialize_fov():
-	global fov_recompute, fov_map
+	global fov_recompute, fov_map, beast_fov_map
 	
 	fov_recompute = True
 	
@@ -1590,6 +1642,12 @@ def initialize_fov():
 	for y in range(MAP_HEIGHT):
 		for x in range(MAP_WIDTH):
 			libtcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
+			
+	#create beast's FOV map
+	beast_fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
+	for y in range(MAP_HEIGHT):
+		for x in range(MAP_WIDTH):
+			libtcod.map_set_properties(beast_fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
 	
 	libtcod.console_clear(con)  #unexplored areas start black (which is the default background color)
 
@@ -1603,6 +1661,7 @@ def play_game():
 	
 	while not libtcod.console_is_window_closed():																#MAIN LOOP
 		libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
+		
 		render_all()
 		
 		#flush console to screen
@@ -1686,7 +1745,7 @@ def main_menu():
 #INITIALIZATION AND MAIN LOOP
 #------------------------------------------------------------#
 #libtcod.console_set_custom_font('arial10x10.png', libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_TCOD) 	#init custom font
-libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'PURGATORIO', False)								  	#init console
+libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'PURGE', False)								  	#init console
 con = libtcod.console_new(MAP_WIDTH, MAP_HEIGHT)														#init off-screen console
 top_panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)												#init top panel
 bottom_panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)											#init bottom panel
