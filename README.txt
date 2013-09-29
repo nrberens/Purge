@@ -1,36 +1,47 @@
-This directory contains antialiased fonts for libtcod.
-These fonts are in public domain. 
+﻿PURGE Alpha
+v.20a
+9/23/2013
+Nathaniel Berens
 
-The file names are composed with :
-<font_name><font_size>_<type>_<layout>.png
-<type> : aa 32 bits png with alpha channel
-         gs 24 bits or greyscale PNG
-<layout> : as standard ASCII layout
-           ro standard ASCII layout in row
-           tc TCOD layout
+libtcod library by Jice
+libtcod python wrapper by Jotaf
+http://doryen.eptalys.net/libtcod/
 
-The terminal8x8 font is provided is every possible format as en example.
-You can try them with the provided samples :
+based on code by Jotaf
+http://roguebasin.roguelikedevelopment.org/index.php?title=Complete_Roguelike_Tutorial,_using_python%2Blibtcod
 
-./samples_c -font fonts/terminal8x8_aa_as.png -font-nb-char 16 16
-./samples_c -font fonts/terminal8x8_aa_ro.png -font-nb-char 16 16 -font-in-row
-./samples_c -font fonts/terminal8x8_aa_tc.png -font-nb-char 32 8 -font-tcod
-./samples_c -font fonts/terminal8x8_gs_as.png -font-nb-char 16 16 -font-greyscale
-./samples_c -font fonts/terminal8x8_gs_ro.png -font-nb-char 16 16 -font-greyscale -font-in-row
-./samples_c -font fonts/terminal8x8_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
+GAMEPLAY:
+There are 21 floors. Each floor (currently) contains the corpse of a fellow scientist, a bomb component, and The Beast.
 
-The libtcod 1.3.2 (non antialiased) terminal font is still there and still works :
-./samples_c -font terminal.png -font-nb-char 16 16
+Find the corpses -- they have items on them. Experiment with the items. They'll help you survive.
 
-All other fonts are provided only in gs_tc format (greyscale, TCOD layout).
-To try them :
+Find the bomb components. Once you collect 5, you'll have an armed nuclear bomb. Plant the bomb to DESTROY HELL.
 
-Terminal fonts with different size (you can use them as template to create new fonts) :
-./samples_c -font fonts/terminal7x7_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
-./samples_c -font fonts/terminal10x10_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
+You have limited oxygen. Some corpses will contain tanks you can siphon from. The caverns also contain a fungus that emanates oxygen. Walking over it will allow your suit to refill it's oxygen.
 
-Custom fonts :
-./samples_c -font fonts/caeldera8x8_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
-./samples_c -font fonts/lucida8x8_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
-./samples_c -font fonts/celtic_garamond_10x10_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
-./samples_c -font fonts/dundalk12x12_gs_tc.png -font-nb-char 32 8 -font-greyscale -font-tcod
+Avoid The Beast. He doesn't like you, and you can't hurt him. HINT: He doesn't like water or strong light.
+
+CONTROLS:
+
+Arrow Keys to move
+I to access (I)nventory menu
+G to (G)et items
+D to (D)rop an item
+P to (P)ing the map with your Scanner
+O to (O)pen doors
+> to Descend stairs
+< to Ascend stairs
+ESC to reach Main Menu
+
+
+KNOWN BUGS:
+
+* Changes to the FOV calculations do not update until after the next character input
+* Maps occasionally do not spawn the Beast or Explorer Corpses
+* Items occasionally spawn in walls
+* Bomb does not need to be planted on final floor, any floor counts as a win
+* Win screen exits immediately to main menu
+
+TO DO:
+
+* Shit tons -- no variation in level generation, no difficulty curve, no narrative, no tileset, etc.
